@@ -10,20 +10,13 @@ from langchain_core.documents import Document
 from uuid import uuid4
 from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
 from langchain_chroma import Chroma
-import logging
+from src.Logger import get_logger
+from src.UserDefinedFunction import RAGFunctions
 
-def initialize_vector_store(embeddings):
-    return Chroma(
-        collection_name="example_collection",
-        embedding_function=embeddings,
-        persist_directory="./chroma_langchain_db",  # Where to save data locally, remove if not necessary
-    )
+logger = get_logger("web_scrap_&_embedding")
 
 
-logger = logging.Logger("scrapping and embeddings")
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler())
+
 
 def get_headers(url):
 
@@ -170,12 +163,12 @@ def load_documents(urls: list,vector_store, skipped_urls=None, fetched_urls=None
 
 
 if __name__ =="__main__":
-    model_name = "all-MiniLM-L6-v2"
-    logger.info(f"The embedding model  `{model_name}` is being downloaded and set")
-    embeddings = SentenceTransformerEmbeddings(model_name=model_name)
 
-    logger.info("vector is being initialization")
-    vector_store = initialize_vector_store(embeddings)
+    model_name = "all-MiniLM-L6-v2"
+    collection_name = "example_collection"
+    persist_directory = "./chroma_langchain_db"
+
+    vector_store = RAGFunctions.vector_store(model_name=model_name,collection_name=collection_name,persist_directory=persist_directory)
 
     url = "https://www.everydayhealth.com/conditions/"
     logger.info(f"urls of headers are being fetched from {url}....")
