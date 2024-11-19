@@ -1,5 +1,6 @@
 from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
-from langchain_chroma import Chroma
+from langchain_mongodb import MongoDBAtlasVectorSearch
+from pymongo import MongoClient
 from langchain_core.prompts import MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,13 +15,22 @@ from langchain_google_genai import (
 class RAGFunctions:
 
     @staticmethod
-    def vector_store(model_name,collection_name,persist_directory):
+    def vector_store(model_name,embedding_dim,cluster_uri,db_name,collection_name):
         embeddings = SentenceTransformerEmbeddings(model_name=model_name)
-        vector_store = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=persist_directory,
+
+        # initialize MongoDB python client
+        client = MongoClient(cluster_uri)
+        ATLAS_VECTOR_SEARCH_INDEX_NAME = "langchain-test-index-vectorstores"
+
+        MONGODB_COLLECTION = client[db_name][collection_name]
+
+        vector_store = MongoDBAtlasVectorSearch(
+            collection=MONGODB_COLLECTION,
+            embedding=embeddings,
+            index_name=ATLAS_VECTOR_SEARCH_INDEX_NAME,
+            relevance_score_fn="cosine",
         )
+
 
         return vector_store
 

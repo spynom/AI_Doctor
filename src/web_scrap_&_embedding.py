@@ -10,8 +10,10 @@ from langchain_core.documents import Document
 from uuid import uuid4
 from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
 from langchain_chroma import Chroma
-from src.Logger import get_logger
-from src.UserDefinedFunction import RAGFunctions
+from Logger import get_logger
+from UserDefinedFunction import RAGFunctions
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = get_logger("web_scrap_&_embedding")
 
@@ -77,15 +79,70 @@ def get_html(url):
 
 
 
+def get_docs_from_html(url,html = None):
+    if html is None:
+        return None
+
+    html1 = html.find("article",
+                      class_="eh-template eh-template--article eh-template--rails eh-template--right-rail eh-template--left-rail")
+
+    if html1 is None:
+        logger.warning(f"skipped url due to different template found: {url} ")
+        return None
+
+    try:
+        head = html1.find("div", class_="eh-template__top").find("div",
+                                                                 class_="subheader-label eh-pg-headline__subheader").text
+    except:
+        head = ""
+    try:
+        title = html1.find("div", class_="eh-template__top").find("h1", class_="eh-pg-headline__title").text
+    except:
+        return None
+
+    html2 = html1.find("div", class_="eh-template__body")
+    if html2 is None:
+        logger.warning(f"skipped url no `eh-template__body` class not found in {url} page")
+        return None
+
+    contents = html2.findAll("div", class_="eh-widget eh-widget--cb")
+    if contents is None:
+        logger.warning(f"skipped url : `eh-widget eh-widget--c` class not found in {url} page")
+        return None
+
+    documents = []
+    links_on_page = []
+
+    for content in contents:
+        document = Document(
+            page_content=content.text,
+            metadata={"source": url,
+                      "head": head,
+                      "title": title.replace(" ", "_"),
+                      },
+        )
+        documents.append(
+            document
+        )
+
+        raw_links_data = content.findAll("a")
+
+        if raw_links_data is not None:
+            for raw_link in raw_links_data:
+                links_on_page.append(raw_link.get('href')) if raw_link.get('href').startswith("https://www.everydayhealth.com") else None
 
 
-def load_documents(urls: list,vector_store, skipped_urls=None, fetched_urls=None,current_id=1) -> None:
+    return documents, links_on_page
 
-    if current_id == 1000:
-        logger.info("stopped due to current_id exceeded 1000")
-        return skipped_urls
+
+
+
+
+def load_documents(urls: list,vector_store, skipped_urls=None, fetched_urls=None) -> None:
+
 
     if fetched_urls is None:
+
         fetched_urls = []
     if skipped_urls is None:
         skipped_urls = []
@@ -99,64 +156,26 @@ def load_documents(urls: list,vector_store, skipped_urls=None, fetched_urls=None
         else:
             fetched_urls.append(url)
 
-        HTML = get_html(url)
-        if HTML is None:
+        html = get_html(url)
+        if html is None:
             continue
 
-        html1 = HTML.find("article",
-                          class_="eh-template eh-template--article eh-template--rails eh-template--right-rail eh-template--left-rail")
+        raw_documents = get_docs_from_html(url,html)
 
-        if html1 is None:
-            skipped_urls.append(url)
-            logger.error(f"skipped url due to different template found: {url} ")
+        if raw_documents is None:
             continue
+        documents,links_on_page = raw_documents
+        if links_on_page:
+            links.extend(links_on_page)
 
-        try:
-            head = html1.find("div", class_="eh-template__top").find("div",class_="subheader-label eh-pg-headline__subheader").text
-        except:
-            head = ""
-        try:
-            title = html1.find("div", class_="eh-template__top").find("h1", class_="eh-pg-headline__title").text
-        except:
-            continue
 
-        html2 = html1.find("div", class_="eh-template__body")
-        if html2 is None:
-            logger.error(f"skipped url no sub-sections found: {url} ")
-            skipped_urls.append(url)
-            continue
-
-        contents = html2.findAll("div", class_="eh-widget eh-widget--cb")
-        if not contents:
-            skipped_urls.append(url)
-            continue
-
-        documents = []
-
-        for content in contents:
-            document = Document(
-                page_content=content.text,
-                metadata={"source": url,
-                          "head":head,
-                          "title":re.sub("[^a-zA-Z/d ]","",title).replace(" ","_"),
-                          },
-                id=current_id,
-            )
-            documents.append(
-                document
-            )
-            current_id += 1
-
-            links.extend([link.get("href") for link in content.findAll("a") if
-                          link.get("href").startswith("https://www.everydayhealth.com")])
 
         uuids = [str(uuid4()) for _ in range(len(documents))]
         vector_store.add_documents(documents=documents, ids=uuids)
-
-        del documents, html2, html1
+        del documents
 
     if links:
-        skipped_urls.extend(load_documents(links,vector_store, skipped_urls, fetched_urls,current_id))
+        skipped_urls.extend(load_documents(links,vector_store, skipped_urls, fetched_urls))
 
         return skipped_urls
 
@@ -165,10 +184,12 @@ def load_documents(urls: list,vector_store, skipped_urls=None, fetched_urls=None
 if __name__ =="__main__":
 
     model_name = "all-MiniLM-L6-v2"
-    collection_name = "example_collection"
-    persist_directory = "./chroma_langchain_db"
+    embedding_dim = 384
+    cluster_uri =os.getenv("CLUSTER_URL")
+    db_name = "langchain"
+    collection_name = "vector"
 
-    vector_store = RAGFunctions.vector_store(model_name=model_name,collection_name=collection_name,persist_directory=persist_directory)
+    vector_store = RAGFunctions.vector_store(model_name=model_name,embedding_dim=embedding_dim,cluster_uri=cluster_uri,db_name=db_name,collection_name=collection_name)
 
     url = "https://www.everydayhealth.com/conditions/"
     logger.info(f"urls of headers are being fetched from {url}....")
