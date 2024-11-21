@@ -3,19 +3,31 @@ from langchain_mongodb import MongoDBAtlasVectorSearch
 from pymongo import MongoClient
 from langchain_core.prompts import MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains.retrieval import create_retrieval_chain
 from langchain_google_genai import (
     ChatGoogleGenerativeAI,
     HarmBlockThreshold,
     HarmCategory,
 )
+import sqlite3
+import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+
+#connect to Mongodb Database
+model_name = "all-MiniLM-L6-v2"
+embedding_dim = 384
+cluster_uri =os.getenv("CLUSTER_URL")
+db_name = "langchain"
+collection_name = "vector"
+
 
 class RAGFunctions:
 
     @staticmethod
-    def vector_store(model_name,embedding_dim,cluster_uri,db_name,collection_name):
+    def vector_store():
         embeddings = SentenceTransformerEmbeddings(model_name=model_name)
 
         # initialize MongoDB python client
@@ -43,36 +55,57 @@ class RAGFunctions:
             },
         )
 
+
+class DatabaseFunctions:
     @staticmethod
-    def history_aware_retriever(llm,retriever):
-        contextualize_q_system_prompt = """
-        Given a chat history and the latest user question
-        which might reference context in the chat history,
-        formulate a standalone question which can be understood
-        without the chat history. Do NOT answer the question,
-        just reformulate it if needed and otherwise return it as is.
-        """
-
-        contextualize_q_prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", contextualize_q_system_prompt),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ]
-        )
-
-        return create_history_aware_retriever(
-            llm, retriever, contextualize_q_prompt
-        )
+    def get_db_connection():
+        conn = sqlite3.connect("rag_app.db")
+        conn.row_factory = sqlite3.Row
+        return conn
 
     @staticmethod
-    def question_answer_chain(system_prompt,llm):
-         #include context position as {context} format in system_prompt
-        qa_prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", system_prompt),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ]
-        )
-        return create_stuff_documents_chain(llm, qa_prompt)
+    def create_application_logs():
+        conn = DatabaseFunctions.get_db_connection()
+        conn.execute('''CREATE TABLE IF NOT EXISTS application_logs
+        (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT,
+        user_query TEXT,
+        response TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        conn.close()
+
+    @staticmethod
+    def insert_application_logs(session_id, user_query, response):
+        conn = DatabaseFunctions.get_db_connection()
+        conn.execute('INSERT INTO application_logs (session_id, user_query, response) VALUES (?, ?, ?)',
+                     (session_id, user_query, response))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_chat_history(session_id):
+        conn = DatabaseFunctions.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_query, response FROM application_logs WHERE session_id = ? ORDER BY created_at',
+                       (session_id,))
+        messages = []
+        for row in cursor.fetchall():
+            messages.extend([
+                {"role": "human", "content": row['user_query']},
+                {"role": "ai", "content": row['response']}
+            ])
+        conn.close()
+        return messages
+
+    @staticmethod
+    def get_sessions():
+        conn = DatabaseFunctions.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT DISTINCT session_id FROM application_logs')
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append(row['session_id'])
+
+        conn.close()
+        return sessions
+

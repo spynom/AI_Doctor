@@ -2,14 +2,9 @@
 from bs4 import BeautifulSoup
 import requests
 import time
-import re
 import os
-from pathlib import Path
-import json
 from langchain_core.documents import Document
 from uuid import uuid4
-from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
-from langchain_chroma import Chroma
 from Logger import get_logger
 from UserDefinedFunction import RAGFunctions
 from dotenv import load_dotenv
