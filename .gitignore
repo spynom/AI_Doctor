@@ -4,3 +4,5 @@ venv
 data
 .idea
 .env
+chat_history.db
+app.log

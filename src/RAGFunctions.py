@@ -1,7 +1,11 @@
-import uvicorn
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from UserDefinedFunction import DatabaseFunctions,RAGFunctions
+from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
+from langchain_mongodb import MongoDBAtlasVectorSearch
+from pymongo import MongoClient
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    HarmBlockThreshold,
+    HarmCategory,
+)
 import os
 from langchain_core.prompts import MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever
@@ -11,18 +15,55 @@ from langchain.chains.retrieval import create_retrieval_chain
 from dotenv import load_dotenv
 load_dotenv()
 
-# create database instance
-DatabaseFunctions.create_application_logs()
 
 #connect to Mongodb Database
-vector_store_ = RAGFunctions.vector_store()
+model_name = "all-MiniLM-L6-v2"
+embedding_dim = 384
+cluster_uri =os.getenv("CLUSTER_URL")
+db_name = "langchain"
+collection_name = "vector"
+
+
+
+
+
+def vector_store():
+    embeddings = SentenceTransformerEmbeddings(model_name=model_name)
+
+    # initialize MongoDB python client
+    client = MongoClient(cluster_uri)
+    ATLAS_VECTOR_SEARCH_INDEX_NAME = "langchain-test-index-vectorstores"
+
+    MONGODB_COLLECTION = client[db_name][collection_name]
+
+    vector_store = MongoDBAtlasVectorSearch(
+        collection=MONGODB_COLLECTION,
+        embedding=embeddings,
+        index_name=ATLAS_VECTOR_SEARCH_INDEX_NAME,
+        relevance_score_fn="cosine",
+    )
+
+    return vector_store
+
+
+def LLM_model(model_name):
+    return ChatGoogleGenerativeAI(
+        model=model_name,
+        safety_settings={
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        },
+    )
+
+
+#connect to Mongodb Database
+vector_store_ = vector_store()
 
 # passing vector_store as retriever
 retriever = vector_store_.as_retriever(search_kwargs={"k": 3})
 
 # llm api
 model_name = "gemini-1.5-pro-latest"
-llm_model = RAGFunctions.LLM_model(model_name)
+llm_model = LLM_model(model_name)
 
 # history aware retriever for sending history chat data to llm
 contextualize_q_system_prompt = """
@@ -73,39 +114,3 @@ question_answer_chain = create_stuff_documents_chain(llm_model, qa_prompt)
 
 rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-def get_response(session_id, query):
-    if session_id in DatabaseFunctions.get_sessions():
-        chat_history = DatabaseFunctions.get_chat_history(session_id)
-
-    else:
-        chat_history = []
-
-    response = rag_chain.invoke({"input": query, "chat_history": chat_history, "context": history_aware_retriever})[
-        "answer"]
-    DatabaseFunctions.insert_application_logs(session_id, query, response)
-    return response
-
-
-# Create an instance of FastAPI
-app = FastAPI()
-
-# Define a Pydantic model for the POST request body
-class Message(BaseModel):
-    session: str = Field(..., max_length=10)  # String with maximum length of 10
-    text: str = Field(..., min_length=10, max_length=500)  # String with length between 10 and 500
-
-
-
-@app.get("/")
-def home():
-    return {"message": "Welcome to health assist chat bot api"}
-
-@app.post("/chat")
-def get_answer(message: Message):
-    session = message.session
-    question = message.text
-    response = get_response(session,question)
-    return {"response":response}
-
-if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8003, reload=True)
